@@ -6,7 +6,8 @@ import time
 import json
 import re
 import csv
-import shutil  # Import shutil for file operations
+import shutil
+from tqdm import tqdm  # Import tqdm
 
 def clean_filename(filename):
     """Cleans a filename by removing special characters and replacing spaces/underscores with hyphens."""
@@ -60,7 +61,7 @@ def download_or_replace_image(image_url, local_filepath, headers):
     except Exception as e:
         print(f"An error occurred while processing '{image_url}': {e}")
 
-def scrape_images(url, headers, base_dir, csv_writer, csvfile):
+def scrape_images(url, headers, base_dir, csv_writer, csvfile, pbar):
     """Scrapes images from a given URL, extracting project names and organizing them into subfolders."""
     print(f"scrape_images called for URL: {url}")
     TIMEOUT = 10
@@ -86,7 +87,8 @@ def scrape_images(url, headers, base_dir, csv_writer, csvfile):
 
     image_counter = 1
 
-    for container in soup.find_all("div", class_="x-column"):
+    containers = soup.find_all("div", class_="x-column")
+    for container in containers:
         a_tag = container.find("a")
         project_name_span = a_tag.find("span", class_="heading") if a_tag else None
         project_name = project_name_span.text.strip() if project_name_span else None
@@ -121,6 +123,7 @@ def scrape_images(url, headers, base_dir, csv_writer, csvfile):
         csvfile.flush()
 
         time.sleep(DELAY)
+        pbar.update(1)  # Update the progress bar
 
     print(f"Finished scraping {url}")
 
@@ -187,8 +190,21 @@ def scrape_from_sitemap(base_url, headers, base_dir):
         csv_writer = csv.writer(csvfile)
         csv_writer.writerow(["Old Name", "URL", "New Name", "Folder Name"])
 
+        # Count the total number of images to be scraped
+        total_images = 0
         for url in sitemap:
-            scrape_images(url, headers, base_dir, csv_writer, csvfile)
+            try:
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.content, "html.parser")
+                total_images += len(soup.find_all("div", class_="x-column"))
+            except requests.exceptions.RequestException as e:
+                print(f"Error counting images at URL {url}: {e}")
+
+        # Create the progress bar
+        with tqdm(total=total_images, desc="Scraping Images") as pbar:
+            for url in sitemap:
+                scrape_images(url, headers, base_dir, csv_writer, csvfile, pbar)
 
 if __name__ == "__main__":
     headers = {
