@@ -2,13 +2,12 @@
  * Generates a pick list from the "POT Orders" sheet, summarizing items to be picked
  * from orders that haven't been marked as "Despatched." Includes order details grouped by order.
  */
-function generatePickListWithOrderDetails() {
+function generatePickListWithVisualCards() {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ordersSheet = ss.getSheetByName("POT Orders");
   const pickListSheetName = "Pick List";
 
-  // Define column names for better maintainability
   const columnNames = {
     item: "Item",
     qty: "QTY",
@@ -17,7 +16,7 @@ function generatePickListWithOrderDetails() {
     lastName: "Last Name",
     postage: "Postage",
     purchaseDate: "Purchase Date",
-    webOrderNumber: "Web Order Number", // Added Web Order Number
+    webOrderNumber: "Web Order Number",
   };
 
   if (!ordersSheet) {
@@ -26,202 +25,119 @@ function generatePickListWithOrderDetails() {
   }
 
   const data = ordersSheet.getDataRange().getValues();
-  const headers = data[0];
+  const headers = data[0].map(h => h.toString().trim().toLowerCase());
+  const getColumnIndex = (colName) => headers.indexOf(colName.toLowerCase());
 
-  // Get column indices based on column names
-  const itemColumnIndex = headers.indexOf(columnNames.item);
-  const qtyColumnIndex = headers.indexOf(columnNames.qty);
-  const dateDespatchedIndex = headers.indexOf(columnNames.dateDespatched);
-  const firstNameColumnIndex = headers.indexOf(columnNames.firstName);
-  const lastNameColumnIndex = headers.indexOf(columnNames.lastName);
-  const postageColumnIndex = headers.indexOf(columnNames.postage);
-  const purchaseDateColumnIndex = headers.indexOf(columnNames.purchaseDate);
-  const webOrderNumberColumnIndex = headers.indexOf(columnNames.webOrderNumber); // Added Web Order Number
+  const itemIndex = getColumnIndex(columnNames.item);
+  const qtyIndex = getColumnIndex(columnNames.qty);
+  const despatchIndex = getColumnIndex(columnNames.dateDespatched);
+  const firstNameIndex = getColumnIndex(columnNames.firstName);
+  const lastNameIndex = getColumnIndex(columnNames.lastName);
+  const postageIndex = getColumnIndex(columnNames.postage);
+  const purchaseDateIndex = getColumnIndex(columnNames.purchaseDate);
+  const orderNumIndex = getColumnIndex(columnNames.webOrderNumber);
 
-  // Check if all required columns exist
-  if (
-    itemColumnIndex === -1 ||
-    qtyColumnIndex === -1 ||
-    dateDespatchedIndex === -1 ||
-    firstNameColumnIndex === -1 ||
-    lastNameColumnIndex === -1 ||
-    postageColumnIndex === -1 ||
-    purchaseDateColumnIndex === -1 ||
-    webOrderNumberColumnIndex === -1 // Added Web Order Number
-  ) {
-    ui.alert(
-      "⚠️ Error: Column headers not found. Ensure all required columns exist."
-    );
+  if ([itemIndex, qtyIndex, despatchIndex, firstNameIndex, lastNameIndex,
+      postageIndex, purchaseDateIndex, orderNumIndex].includes(-1)) {
+    ui.alert("⚠️ Error: Column headers not found. Check header names.");
     return;
   }
 
+  let orderMap = new Map();
   let skuMap = new Map();
-  let orderMap = new Map(); // Map to store orders and their items
-  let orderRows = [];
 
   for (let i = 1; i < data.length; i++) {
-    let orderItems = data[i][itemColumnIndex];
-    let dateDespatched = data[i][dateDespatchedIndex];
-    let qtyValues = data[i][qtyColumnIndex];
+    const row = data[i];
+    if (row[despatchIndex]) continue;
 
-    if (!dateDespatched) {
-      orderRows.push(i + 1); // Add row number (1-based) to the list of processed rows
+    const orderItemsRaw = row[itemIndex]?.toString().replace(/SKU:\sSKU:/g, "SKU:");
+    const skuMatch = orderItemsRaw.match(/SKU:\s(.+?)(?:\s\/|$)/);
+    if (!skuMatch) continue;
 
-      // Clean up the order items string
-      orderItems = orderItems.replace(/SKU:\sSKU:/g, "SKU:");
+    const skus = skuMatch[1].split(",").map(s => s.trim());
+    const quantities = row[qtyIndex].toString().split(",").map(q => parseInt(q.trim()) || 1);
+    const orderKey = row[orderNumIndex];
 
-      // Improved SKU parsing: Match until / or end of string
-      const skuMatch = orderItems.match(/SKU:\s(.+?)(?:\s\/|$)/);
-      if (skuMatch) {
-        let skus = skuMatch[1].split(",").map((sku) => sku.trim());
-        let itemQuantities = qtyValues.toString().split(",").map(Number);
-
-        // Check for quantity/SKU mismatch
-        if (skus.length !== itemQuantities.length) {
-          Logger.log(
-            `Warning: Mismatched SKU and quantity count in row ${
-              i + 1
-            }: ${orderItems}`
-          );
-          // Optionally, alert the user or handle the mismatch in a specific way
-        }
-
-        skus.forEach((sku, index) => {
-          let quantity = itemQuantities[index] || 1; // Default to 1 if quantity is missing
-          skuMap.set(sku, (skuMap.get(sku) || 0) + quantity);
-
-          // Create order key - Now using Web Order Number
-          const webOrderNumber = data[i][webOrderNumberColumnIndex];
-          const orderKey = webOrderNumber; // Using Web Order Number as the key
-
-          // Add item to orderMap
-          if (!orderMap.has(orderKey)) {
-            orderMap.set(orderKey, {
-              details: [
-                data[i][firstNameColumnIndex],
-                data[i][lastNameColumnIndex],
-                data[i][postageColumnIndex],
-                data[i][purchaseDateColumnIndex],
-                webOrderNumber, // Added Web Order Number to details
-              ],
-              items: [],
-            });
-          }
-          orderMap.get(orderKey).items.push([sku, quantity]);
-        });
-      } else {
-        Logger.log(`Warning: Could not parse SKU in row ${i + 1}: ${orderItems}`);
-        // Optionally, alert the user or handle the unparseable SKU
-      }
+    if (!orderMap.has(orderKey)) {
+      orderMap.set(orderKey, {
+        name: `${row[firstNameIndex]} ${row[lastNameIndex]}`,
+        postage: row[postageIndex],
+        purchaseDate: row[purchaseDateIndex],
+        items: []
+      });
     }
+
+    skus.forEach((sku, index) => {
+      const qty = quantities[index] || 1;
+      orderMap.get(orderKey).items.push([sku, qty]);
+      skuMap.set(sku, (skuMap.get(sku) || 0) + qty);
+    });
   }
 
-  if (skuMap.size === 0) {
-    // No unprocessed orders found. No alert needed.
-    return;
-  }
-
+  // Remove old sheet and create new one
   let pickListSheet = ss.getSheetByName(pickListSheetName);
-  if (pickListSheet) {
-    ss.deleteSheet(pickListSheet);
-  }
-
+  if (pickListSheet) ss.deleteSheet(pickListSheet);
   pickListSheet = ss.insertSheet(pickListSheetName);
 
-  let timestamp = new Date();
-  pickListSheet.appendRow(["📅 Updated On:", timestamp]);
-  pickListSheet.appendRow(["📋 Order Rows Processed:", orderRows.join(", ")]);
+  // Timestamp
+  pickListSheet.appendRow(["📦 Pick List Generated:", new Date()]);
   pickListSheet.appendRow([""]);
 
-  let headerRow = pickListSheet.getLastRow() + 1;
-
+  // 🔢 SKU Aggregated Picking List
+  pickListSheet.appendRow(["📋 Components to Pick"]);
   pickListSheet.appendRow(["SKU", "Quantity"]);
+  const startRow = pickListSheet.getLastRow();
 
-  let sortedSkuList = Array.from(skuMap.entries()).sort((a, b) =>
-    a[0].localeCompare(b[0])
-  );
-
-  let totalItems = 0;
-  sortedSkuList.forEach(([sku, qty]) => {
+  let totalQty = 0;
+  const sortedSkus = Array.from(skuMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  sortedSkus.forEach(([sku, qty]) => {
     pickListSheet.appendRow([sku, qty]);
-    totalItems += qty;
+    totalQty += qty;
   });
 
   pickListSheet.appendRow([""]);
-  pickListSheet.appendRow(["🛒 Total Items to Pick:", totalItems]);
+  pickListSheet.appendRow(["🧮 Total Components:", totalQty]);
 
-  let headerRange = pickListSheet.getRange(headerRow, 1, 1, 2);
-  headerRange
-    .setFontWeight("bold")
-    .setHorizontalAlignment("center")
-    .setFontSize(12);
-  pickListSheet.getRange("A1:A2").setFontWeight("bold").setFontSize(12);
-
-  let dataRange = pickListSheet.getRange(
-    headerRow,
-    1,
-    sortedSkuList.length + 1,
-    2
-  );
-  dataRange.setBorder(true, true, true, true, true, true);
+  // Format picking list
+  pickListSheet.getRange(startRow, 1, sortedSkus.length + 1, 2).setBorder(true, true, true, true, true, true);
+  pickListSheet.getRange(startRow, 1, 1, 2).setFontWeight("bold").setFontSize(12).setHorizontalAlignment("center");
   pickListSheet.autoResizeColumns(1, 2);
-  pickListSheet.setFrozenRows(headerRow);
 
-  // Calculate where to insert the order details header
-  let orderDetailsHeaderRow = pickListSheet.getLastRow() + 3; // 3 rows after "Total Items"
+  // Add spacing before order cards
+  pickListSheet.appendRow([""]);
+  pickListSheet.appendRow(["🧾 Order Details"]);
+  pickListSheet.appendRow([""]);
+  let currentRow = pickListSheet.getLastRow() + 1;
 
-  // Insert the empty rows *before* the order details header row
-  pickListSheet.insertRowsBefore(orderDetailsHeaderRow, 2);
+  // 🧾 Visual Order Cards
+  for (const [orderNum, order] of orderMap.entries()) {
+    const startCardRow = currentRow;
 
-  pickListSheet.getRange(orderDetailsHeaderRow, 1).setValue("Order Details:"); // Add header
+    pickListSheet.getRange(currentRow++, 1).setValue(`🧾 Web Order Number: ${orderNum}`).setFontWeight("bold");
+    pickListSheet.getRange(currentRow++, 1).setValue(`👤 ${order.name}`);
+    pickListSheet.getRange(currentRow++, 1).setValue(`📦 Postage: ${order.postage}`);
+    pickListSheet.getRange(currentRow++, 1).setValue(`🕓 Purchase Date: ${order.purchaseDate}`);
+    pickListSheet.getRange(currentRow++, 1).setValue(`🛒 Items:`).setFontWeight("bold");
 
-  // Output order details grouped by order
-  let orderDetailsDataStartRow = pickListSheet.getLastRow() + 1;
-  for (const [orderKey, orderData] of orderMap) {
-    // Output order details
-    const currentOrderStartRow = pickListSheet.getLastRow() + 1;
-    pickListSheet.appendRow(["Web Order Number:", orderKey]); // Added Web Order Number
-    pickListSheet.appendRow([
-      "First Name",
-      "Last Name",
-      "Postage",
-      "Purchase Date",
-    ]);
-    pickListSheet.appendRow(orderData.details.slice(0, 4)); // Output the first 4 details
-    pickListSheet.appendRow(["SKU", "Quantity"]);
-
-    // Output order items
-    orderData.items.forEach((item) => {
-      pickListSheet.appendRow(item);
+    let orderTotal = 0;
+    order.items.forEach(([sku, qty]) => {
+      pickListSheet.getRange(currentRow++, 1).setValue(`- ${sku} x${qty}`);
+      orderTotal += qty;
     });
+    pickListSheet.getRange(currentRow++, 1).setValue(`Total Items: ${orderTotal}`).setFontWeight("bold");
 
-    // Add a more distinct separator between orders
-    const currentOrderEndRow = pickListSheet.getLastRow();
+    // Card border
+    const cardHeight = currentRow - startCardRow;
+    const cardRange = pickListSheet.getRange(startCardRow, 1, cardHeight, 1);
+    cardRange.setBorder(true, true, true, true, true, true);
+    pickListSheet.getRange(startCardRow, 1, 1, 1).setBackground("#f1f3f4");
+    pickListSheet.getRange(startCardRow, 1, cardHeight, 1).setFontSize(11);
+    pickListSheet.getRange(currentRow -1, 1, 1, 1).setBorder(null, null, true, null, null, null).setBorder(null, null, true, null, false, null, "black", SpreadsheetApp.BorderStyle.THICK); // Add thick bottom border
 
-    // Apply border to the current order
-    pickListSheet.getRange(currentOrderStartRow, 1, currentOrderEndRow - currentOrderStartRow + 1, 6).setBorder(true, true, true, true, true, true);
-    
-    // Add extra blank rows after each order
-    pickListSheet.appendRow([""]); // Add a blank row
-    pickListSheet.appendRow([""]); // Add a blank row
-    pickListSheet.appendRow([""]); // Add a blank row
+    currentRow++;
+    Logger.log(`Order ${orderNum} starts at row ${startCardRow} and ends at row ${currentRow -1}`);
   }
 
-  // Format order details table
-  let orderDetailsRange = pickListSheet.getRange(
-    orderDetailsDataStartRow,
-    1,
-    pickListSheet.getLastRow() - orderDetailsDataStartRow + 1,
-    6
-  );
-  pickListSheet
-    .getRange(orderDetailsHeaderRow, 1, 1, 6)
-    .setFontWeight("bold")
-    .setHorizontalAlignment("center")
-    .setFontSize(12);
-  pickListSheet.autoResizeColumns(1, 6); // Auto-resize columns AFTER adding data
-  pickListSheet.setFrozenRows(orderDetailsDataStartRow); // Freeze the order details header row
-
-  //all formatting is done, *now* send the alert
-  ui.alert("✅ Pick List has been successfully updated!");
+  pickListSheet.autoResizeColumn(1);
+  ui.alert("✅ Pick List has been successfully created with both picking summary and visual order cards.");
 }
