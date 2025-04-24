@@ -1,4 +1,3 @@
-<script>
 (function () {
   const DEBUG = true;
 
@@ -190,4 +189,3 @@
     setTimeout(updateCMSItemClasses, CONFIG.timeoutDelay);
   });
 })();
-</script>
